@@ -4,7 +4,9 @@ using MQTTnet.Client;
 using Serilog;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Dynamic;
+using System.Net.Mail;
 using System.Text;
 using System.Windows.Forms;
 
@@ -978,6 +980,97 @@ namespace MqttClientDemo
             }
         }
 
+        /// <summary>
+        /// 辅助方法：验证数值是否在指定进制的合法范围内
+        /// </summary>
+        /// <param name="value">待验证的数值（byte 范围：0-255）</param>
+        /// <param name="baseValue">目标进制</param>
+        /// <returns>true=合法，false=非法</returns>
+        private bool IsValidValueForBase(byte value, int baseValue)
+        {
+            // 任意进制的合法数值范围：0 ≤ value ≤ baseValue - 1（因为进制的每一位最大是“基数-1”）
+            return value < baseValue;
+        }
+
+        /// <summary>
+        /// 高效版：byte[] 作为指定输入进制的数值序列，直接拼接为目标字符串（支持分隔符、大小写）
+        /// 核心逻辑：每个 byte 是 inputBase 进制的单个数值 → 转为对应字符串 → 拼接（或加分隔符）
+        /// </summary>
+        /// <param name="bytes">待转换的字节数组（每个元素是 inputBase 进制的合法数值，范围 0-(inputBase-1)）</param>
+        /// <param name="inputBase">输入数据的进制（byte 中数值的进制，支持 2-36）</param>
+        /// <param name="separator">分隔符（如 "-", ":", " "，空字符串表示无分隔符）</param>
+        /// <param name="isUpper">是否大写（仅对 16 进制及以上生效，true=大写，false=小写）</param>
+        /// <returns>拼接后的字符串（如示例：{25,11,24}+inputBase=10 → "251124"，inputBase=16 → "190B18"）</returns>
+        /// <exception cref="ArgumentOutOfRangeException">输入进制超出 2-36 范围</exception>
+        /// <exception cref="ArgumentException">byte 中存在 inputBase 进制的非法数值（如 inputBase=10 时 byte=10 非法）</exception>
+        public string ByteToBaseStringOptimized(byte[] bytes, int inputBase = 10, string separator = "", bool isUpper = true)
+        {
+            // 1. 空值处理
+            if (bytes == null || bytes.Length == 0)
+                return string.Empty;
+
+            // 2. 输入进制合法性校验（.NET 支持 2-36 进制转换）
+            if (inputBase != 10 && inputBase != 16)
+                throw new ArgumentOutOfRangeException(nameof(inputBase), "输入进制必须在 10/16 ");
+
+            // 3. 验证每个 byte 是否为 inputBase 进制的合法数值（0 ≤ byte < inputBase）
+            //foreach (byte b in bytes)
+            //{
+            //    if (b >= inputBase)
+            //        throw new ArgumentException($"byte 数值 {b} 是 {inputBase} 进制的非法数值（合法范围：0-{inputBase - 1}）", nameof(bytes));
+            //}
+
+            // 4. 初始化 StringBuilder（预分配容量：每个 byte 最多 2 个字符（如 35 进制的 34→"Y"，36 进制的 35→"Z"）+ 分隔符）
+            int estimatedCapacity = bytes.Length * 2 + (string.IsNullOrEmpty(separator) ? 0 : (bytes.Length - 1) * separator.Length);
+            StringBuilder sb = new StringBuilder(estimatedCapacity);
+            string byteStr = "";
+
+            // 5. 遍历 byte 转换并拼接
+            for (int i = 0; i < bytes.Length; i++)
+            {
+                byte b = bytes[i];
+                // 将 byte（inputBase 进制数值）转为对应字符串（如 25→16进制"19"，11→16进制"0B"，24→16进制"18"）
+                // = Convert.ToString(b, inputBase);
+
+                // 根据用户需求实现不同的转换逻辑
+                if (inputBase == 16)
+                {
+                    //int hh = b / 16;
+                    //int ll = b % 16;
+                    //byteStr = $"{hh:X1}{ll:X1}";
+                    //this.AddLog($"[idx{i}]b:{b}hh:{hh:X1}ll:{ll:X1}byteStr:{byteStr}");
+                
+                    // 需求1: inputBase=10时，将每个byte作为十进制数值转换为十六进制字符串
+                    byteStr = Convert.ToString(b, 16);
+                    //this.AddLog($"ccc{ byteStr}ddd");
+                    // 确保两位数格式
+                    if (byteStr.Length == 1)
+                        byteStr = "0" + byteStr;
+                    // 根据isUpper参数设置大小写
+                    if (isUpper)
+                        byteStr = byteStr.ToUpper();
+                    else
+                        byteStr = byteStr.ToLower();
+                }
+                else if (inputBase == 10)
+                {
+                    // 需求2: inputBase=16时，将每个byte作为十进制数值直接转换为字符串
+                    byteStr = b.ToString();
+                }
+                else
+                    // 其他情况使用标准转换
+                    byteStr = b.ToString("D2");
+
+                sb.Append(byteStr);
+
+                // 添加分隔符（最后一个元素后不添加）
+                if (!string.IsNullOrEmpty(separator) && i < bytes.Length - 1)
+                    sb.Append(separator);
+            }
+
+            return sb.ToString();
+        }
+
         // 更新策略配置报文显示
         private void UpdateStrategyPayloadDisplay(StrategyData? strategy)
         {
@@ -995,6 +1088,10 @@ namespace MqttClientDemo
                         string hexPayload = GenerateHexStrategyPayload(strategy);
                         AddLog($"生成的HEX格式策略报文长度: {hexPayload.Length} 字符");
                         txtFullStrategyPayload.Text = hexPayload;
+
+                        byte[] AutoHex = strategy.AutomationBytesGet();
+                        string AutoStr = ByteToBaseStringOptimized(AutoHex, 16);
+                        AddLog($"生成的HEX格式策略报文: {AutoStr} ");
                     }
                     // 然后检查文本模式
                     else if (rdoStringMode != null && rdoStringMode.Checked)
@@ -1045,46 +1142,62 @@ namespace MqttClientDemo
                 }
 
                 StringBuilder hexBuilder = new StringBuilder();
-                StringBuilder hexStr = new StringBuilder();
-
+                //StringBuilder hexStr = new StringBuilder();
+                byte[] AutoHex = strategy.AutomationBytesGet();
+                string AutoStr = ByteToBaseStringOptimized(AutoHex, 16);
 
                 // 添加策略ID (4字节)
                 hexBuilder.AppendLine("=== 策略ID (4字节) ===");
                 hexBuilder.AppendLine($"{strategy.StrategyId:X8}");
-                hexStr.AppendLine($"{strategy.StrategyId:X8}");
+                //hexStr.Append($"{strategy.StrategyId:X8}");
 
                 // 添加使能标志 (1字节)
                 hexBuilder.AppendLine("\n=== 使能标志 (1字节) ===");
                 hexBuilder.AppendLine($"{strategy.EnabledFlag:X2}");
-                hexStr.AppendLine($"{strategy.EnabledFlag:X2}");
-
+                //hexStr.Append($"{strategy.EnabledFlag:X2}");
 
                 // 添加日期数据 (每个日期2字节)
                 hexBuilder.AppendLine("\n=== 日期数据 (每个2字节) ===");
                 if (strategy.StartDate != null)
                 {
                     hexBuilder.AppendLine($"开始日期: {BitConverter.ToString(strategy.StartDate).Replace("-", " ")}");
+                    //hexStr.Append($"{strategy.StartDate:X6}");
+                    //hexStr.AppendLine(ByteToBaseStringOptimized(strategy.StartDate, 16));
+                    //hexBuilder.AppendLine($"ByteToBaseStringOptimized 结果: {ByteToBaseStringOptimized(strategy.StartDate, 16)}");
+                    //hexStr.Append(ByteToBaseStringOptimized(strategy.StartDate, 16));
+
                 }
                 if (strategy.EndDate != null)
                 {
-                    hexBuilder.AppendLine($"结束日期: {BitConverter.ToHexString(strategy.EndDate).Replace("-", " ")}");
+                    hexBuilder.AppendLine($"结束日期: {BitConverter.ToString(strategy.EndDate).Replace("-", " ")}");
+                    //hexStr.Append($"{strategy.EndDate:X6}");
+                    //hexStr.Append(ByteToBaseStringOptimized(strategy.EndDate, 16));
                 }
-                
+
                 // 添加时间数据 (每个时间2字节)
                 hexBuilder.AppendLine("\n=== 时间数据 (每个2字节) ===");
                 if (strategy.StartTime != null)
                 {
                     hexBuilder.AppendLine($"开始时间: {BitConverter.ToString(strategy.StartTime).Replace("-", " ")}");
+                    //hexStr.Append(ByteToBaseStringOptimized(strategy.StartTime, 16));
+
                 }
                 if (strategy.EndTime != null)
                 {
                     hexBuilder.AppendLine($"结束时间: {BitConverter.ToString(strategy.EndTime).Replace("-", " ")}");
+                    //hexStr.Append(ByteToBaseStringOptimized(strategy.EndTime, 16));
                 }
-                
+
                 // 添加星期-节假日数据 (2字节)
                 hexBuilder.AppendLine("\n=== 星期-节假日数据 (2字节) ===");
                 hexBuilder.AppendLine($"{strategy.WeekHolidayData:X4}");
-                
+                //hexStr.Append($"{strategy.WeekHolidayData:X4}");
+
+                //hexStr.Append($"{strategy.TriggerConditions.Count:X2}");
+                //hexStr.Append($"{strategy.StatusConditions.Count:X2}");
+                //hexStr.Append($"{strategy.ActionConditions.Count:X2}");
+
+
                 // 添加触发条件数量和数据
                 hexBuilder.AppendLine("\n=== 触发条件 ===");
                 if (strategy.TriggerConditions != null)
@@ -1095,6 +1208,9 @@ namespace MqttClientDemo
                         string condition = (strategy.TriggerConditions[i]?.ToString() ?? "");
                         byte[] conditionBytes = System.Text.Encoding.ASCII.GetBytes(condition);
                         hexBuilder.AppendLine($"条件{i+1} (HEX): {BitConverter.ToString(conditionBytes).Replace("-", " ")}");
+                        //hexStr.Append($"{strategy.conditionBytes:X2}");
+                        //hexStr.Append(ByteToBaseStringOptimized(strategy.TriggerConditions[i], 16));
+
                     }
                 }
                 else
@@ -1112,6 +1228,8 @@ namespace MqttClientDemo
                         string condition = (strategy.StatusConditions[i]?.ToString() ?? "");
                         byte[] conditionBytes = System.Text.Encoding.ASCII.GetBytes(condition);
                         hexBuilder.AppendLine($"状态{i+1} (HEX): {BitConverter.ToString(conditionBytes).Replace("-", " ")}");
+                        //hexStr.Append(ByteToBaseStringOptimized(conditionBytes, 16, true));
+
                     }
                 }
                 else
@@ -1129,13 +1247,18 @@ namespace MqttClientDemo
                         string condition = (strategy.ActionConditions[i]?.ToString() ?? "");
                         byte[] conditionBytes = System.Text.Encoding.ASCII.GetBytes(condition);
                         hexBuilder.AppendLine($"动作{i+1} (HEX): {BitConverter.ToString(conditionBytes).Replace("-", " ")}");
+                        //hexStr.Append(ByteToBaseStringOptimized(conditionBytes, 16, true));
+
                     }
                 }
                 else
                 {
                     hexBuilder.AppendLine("动作条件数量: 00");
                 }
-                
+                hexBuilder.AppendLine("有效策略配置hex报文：");
+                hexBuilder.AppendLine(AutoStr);
+                //MessageBox.Show(hexStr.ToString());
+
                 return hexBuilder.ToString();
             }
             catch (Exception ex)
@@ -1556,6 +1679,19 @@ namespace MqttClientDemo
                 default: return "未知";  
             }
         }
+
+        public byte[] AllBaseConditionBytesGet() // 所有字节数据（用于序列化）
+        {
+            List<byte> bytes = new List<byte>();
+            bytes.Add(SIID);
+            bytes.Add(SIIDHigh);
+            bytes.Add(CIID);
+            bytes.Add(CIIDHigh);
+            bytes.Add(DataType);
+            bytes.AddRange(BitConverter.GetBytes(DataValue));
+            return bytes.ToArray();
+        }
+
     }
 
     // 触发条件数据模型
@@ -1603,6 +1739,26 @@ namespace MqttClientDemo
             ushort ciid = (ushort)((CIIDHigh << 8) | CIID);
             return $"MAC: {macStr}, SIID: 0x{siid:X4}, CIID: 0x{ciid:X4}, {GetDataTypeText()} {GetLogicTypeText()} 0x{DataValue:X8}";
         }
+
+        public byte[] TriggerConditionBytesGet() // 所有字节数据（用于序列化）
+        {
+            List<byte> bytes = new List<byte>();
+            //bytes.AddRange(MacAddress);
+            bytes.Add(MacAddress[5]);
+            bytes.Add(MacAddress[4]);
+            bytes.Add(MacAddress[3]);
+            bytes.Add(MacAddress[2]);
+            bytes.Add(MacAddress[1]);
+            bytes.Add(MacAddress[0]);
+            bytes.Add(SIID);
+            bytes.Add(SIIDHigh);
+            bytes.Add(CIID);
+            bytes.Add(CIIDHigh);
+            bytes.Add(DataType);
+            bytes.AddRange(BitConverter.GetBytes(DataValue));
+            bytes.Add(LogicType);
+            return bytes.ToArray();
+        }
     }
 
     // 状态条件数据模型（与触发条件相同）
@@ -1649,6 +1805,18 @@ namespace MqttClientDemo
             ushort ciid = (ushort)((CIIDHigh << 8) | CIID);
             return $"SIID: 0x{siid:X4}, CIID: 0x{ciid:X4}, {GetDataTypeText()} = 0x{DataValue:X8}";
         }
+
+        public byte[] ActionBytesGet() // 所有字节数据（用于序列化）
+        {
+            List<byte> bytes = new List<byte>();
+            bytes.Add(SIID);
+            bytes.Add(SIIDHigh);
+            bytes.Add(CIID);
+            bytes.Add(CIIDHigh);
+            bytes.Add(DataType);
+            bytes.AddRange(BitConverter.GetBytes(DataValue));
+            return bytes.ToArray();
+        }
     }
 
     // 策略数据类
@@ -1673,8 +1841,11 @@ namespace MqttClientDemo
         
         public byte EnabledFlag { get; set; } // 1字节策略使能位
 
+        public byte[] DebounceTime { get; set; } = new byte[2]; // 2字节去抖时间
+
+
         // 克隆方法
-            public StrategyData Clone()
+        public StrategyData Clone()
             {
                 return new StrategyData
                 {
@@ -1685,10 +1856,16 @@ namespace MqttClientDemo
                     EndTime = (byte[])this.EndTime.Clone(),
                     WeekHolidayData = this.WeekHolidayData,
                     EnabledFlag = this.EnabledFlag,
+                    DebounceTime = (byte[])this.DebounceTime.Clone(),
+                    TriggerCount = this.TriggerCount,
+                    StatusCount = this.StatusCount,
+                    ActionCount = this.ActionCount,
+
                     // 克隆条件列表
                     TriggerConditions = this.TriggerConditions.Select(t => t.Clone()).ToList(),
                     StatusConditions = this.StatusConditions.Select(s => s.Clone()).ToList(),
                     ActionConditions = this.ActionConditions.Select(a => a.Clone()).ToList()
+
                 };
         }
 
@@ -1708,7 +1885,32 @@ namespace MqttClientDemo
             sb.AppendLine($"动作条件数: {ActionCount}");
             string status = (EnabledFlag & 0x01) != 0 ? "启用" : "禁用";
             sb.AppendLine("使能状态: " + status);
+            sb.AppendLine("去抖时间: " + BitConverter.ToUInt16(DebounceTime, 0).ToString() + " ms");
             return sb.ToString();
+        }
+
+        public byte[] AutomationBytesGet() // 所有字节数据（用于序列化）
+        {
+            List<byte> bytes = new List<byte>();
+            bytes.AddRange(BitConverter.GetBytes(StrategyId));
+            bytes.AddRange(StartDate);
+            bytes.AddRange(EndDate);
+            bytes.AddRange(StartTime);
+            bytes.AddRange(EndTime);
+            bytes.AddRange(BitConverter.GetBytes(WeekHolidayData));
+            bytes.Add(TriggerCount);
+            bytes.Add(StatusCount);
+            bytes.Add(ActionCount);
+           
+            bytes.Add(EnabledFlag);
+            bytes.AddRange(DebounceTime);
+            bytes.AddRange(new byte[] { 0x00, 0x00, 0x00, 0x00 }); // 保留字节
+
+            bytes.AddRange(TriggerConditions.SelectMany(t => t.TriggerConditionBytesGet()));
+            bytes.AddRange(StatusConditions.SelectMany(s => s.TriggerConditionBytesGet()));
+            bytes.AddRange(ActionConditions.SelectMany(a => a.ActionBytesGet()));
+
+            return bytes.ToArray();
         }
 
         // 格式化BCD日期
@@ -2325,6 +2527,10 @@ namespace MqttClientDemo
         private GroupBox? grpTimeConfig; // 标记为可为null
         private GroupBox? grpLogicConfig; // 标记为可为null
         private GroupBox? grpOtherConfig; // 标记为可为null
+        // 防抖时间控件
+        private Label? labelDebounceTime; // 标记为可为null
+        private TextBox? txtDebounceTime; // 标记为可为null
+        private Label? labelDebounceUnit; // 标记为可为null
         
         // 新增控件：条件列表和管理按钮
         private Label? labelTriggerConditions; // 标记为可为null
@@ -2404,6 +2610,9 @@ namespace MqttClientDemo
             this.chkSunday = new System.Windows.Forms.CheckBox();
             this.chkMonday = new System.Windows.Forms.CheckBox();
             this.chkTuesday = new System.Windows.Forms.CheckBox();
+            this.labelDebounceTime = new System.Windows.Forms.Label();
+            this.txtDebounceTime = new System.Windows.Forms.TextBox();
+            this.labelDebounceUnit = new System.Windows.Forms.Label();
             this.chkWednesday = new System.Windows.Forms.CheckBox();
             this.chkThursday = new System.Windows.Forms.CheckBox();
             this.chkFriday = new System.Windows.Forms.CheckBox();
@@ -2673,6 +2882,35 @@ namespace MqttClientDemo
             this.chkEnabled.Text = "启用策略";
             this.chkEnabled.UseVisualStyleBackColor = true;
             this.chkEnabled.BringToFront();
+            // 
+            // labelDebounceTime
+            // 
+            this.labelDebounceTime.AutoSize = true;
+            this.labelDebounceTime.Location = new System.Drawing.Point(270, 40);
+            this.labelDebounceTime.Name = "labelDebounceTime";
+            this.labelDebounceTime.Size = new System.Drawing.Size(95, 17);
+            this.labelDebounceTime.TabIndex = 30;
+            this.labelDebounceTime.Text = "策略防抖时间:";
+            this.labelDebounceTime.BringToFront();
+            // 
+            // txtDebounceTime
+            // 
+            this.txtDebounceTime.Location = new System.Drawing.Point(378, 37);
+            this.txtDebounceTime.Name = "txtDebounceTime";
+            this.txtDebounceTime.Size = new System.Drawing.Size(80, 23);
+            this.txtDebounceTime.TabIndex = 31;
+            this.txtDebounceTime.Text = "0";
+            this.txtDebounceTime.BringToFront();
+            // 
+            // labelDebounceUnit
+            // 
+            this.labelDebounceUnit.AutoSize = true;
+            this.labelDebounceUnit.Location = new System.Drawing.Point(464, 40);
+            this.labelDebounceUnit.Name = "labelDebounceUnit";
+            this.labelDebounceUnit.Size = new System.Drawing.Size(30, 17);
+            this.labelDebounceUnit.TabIndex = 32;
+            this.labelDebounceUnit.Text = "ms";
+            this.labelDebounceUnit.BringToFront();
             // 
             // btnOK
             // 
@@ -2956,6 +3194,9 @@ namespace MqttClientDemo
             this.Controls.Add(this.txtStrategyId);
             this.Controls.Add(this.btnGenerateId);
             this.Controls.Add(this.chkEnabled);
+            this.Controls.Add(this.labelDebounceTime);
+            this.Controls.Add(this.txtDebounceTime);
+            this.Controls.Add(this.labelDebounceUnit);
             this.Controls.Add(this.grpDateConfig);
             this.Controls.Add(this.grpTimeConfig);
             this.Controls.Add(this.grpWeekConfig);
@@ -2969,6 +3210,9 @@ namespace MqttClientDemo
             this.txtStrategyId.BringToFront();
             this.btnGenerateId.BringToFront();
             this.chkEnabled.BringToFront();
+            this.labelDebounceTime.BringToFront();
+            this.txtDebounceTime.BringToFront();
+            this.labelDebounceUnit.BringToFront();
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
@@ -2993,6 +3237,9 @@ namespace MqttClientDemo
             // 初始化UI的额外设置
             // 设置默认选中的选项
             if (chkLogicOr != null) chkLogicOr.Checked = true;
+            
+            // 设置防抖时间默认值
+            if (txtDebounceTime != null) txtDebounceTime.Text = "0";
             
             // 初始化控件可见性
             UpdateWeekControlsVisibility();
@@ -3056,6 +3303,12 @@ namespace MqttClientDemo
             if (txtStrategyId != null)
             {
                 txtStrategyId.Text = StrategyData.StrategyId.ToString("X8");
+            }
+
+            // 加载防抖时间
+            if (txtDebounceTime != null && StrategyData.DebounceTime != null && StrategyData.DebounceTime.Length == 2)
+            {
+                txtDebounceTime.Text = BitConverter.ToUInt16(StrategyData.DebounceTime, 0).ToString();
             }
 
             // 加载日期和时间
@@ -3331,6 +3584,17 @@ namespace MqttClientDemo
                     uint.TryParse(txtStrategyId.Text.Trim(), System.Globalization.NumberStyles.HexNumber, null, out uint strategyId))
                 {
                     StrategyData.StrategyId = strategyId;
+                }
+
+                // 保存防抖时间
+                if (txtDebounceTime != null && ushort.TryParse(txtDebounceTime.Text.Trim(), out ushort debounceTime))
+                {
+                    StrategyData.DebounceTime = BitConverter.GetBytes(debounceTime);
+                }
+                else
+                {
+                    // 如果解析失败，设置为默认值0
+                    StrategyData.DebounceTime = new byte[] { 0x00, 0x00 };
                 }
 
                 // 保存日期和时间（BCD格式）

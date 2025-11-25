@@ -835,7 +835,7 @@ namespace MqttClientDemo
             ClientSize = new Size(800, 600);
             Controls.Add(tabControl1);
             Name = "MainForm";
-            Text = "MQTT客户端演示程序";
+            Text = "澜潮智能楼宇策略配置工具V1.0.0";
             FormClosing += MainForm_FormClosing;
             tabControl1.ResumeLayout(false);
             tabPage1.ResumeLayout(false);
