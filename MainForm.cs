@@ -36,11 +36,13 @@ namespace MqttClientDemo
         private void InitializeUI()
         {
             // 设置默认值
-            txtBrokerAddress.Text = "test.mosquitto.org";
+            txtBrokerAddress.Text = "emqx.services.lanchotech.com";//"test.mosquitto.org";
             txtPort.Text = "1883";
             txtClientId.Text = $"MQTTClient_{Guid.NewGuid().ToString()[..8]}";
-            txtPublishTopic.Text = "mqtt_demo/test";
-            txtSubscribeTopic.Text = "mqtt_demo/#";
+            txtPublishTopic.Text = "/gateway/pub/00A100000046/uart/plc";//"mqtt_demo/test";
+            txtSubscribeTopic.Text = "/gateway/sub/00A100000046/uart/plc";//"mqtt_demo/#";
+            txtUsername.Text = "ginvc";
+            txtPassword.Text = "j3102689";
             chkCleanSession.Checked = true;
 
             // 更新连接按钮状态
@@ -51,39 +53,39 @@ namespace MqttClientDemo
         }
 
         private void InitializeStrategyConfigUI()
-    {
-        // 确保策略详情相关控件可见并初始化
-        if (labelStrategyDetail != null)
         {
-            labelStrategyDetail.Visible = true;
-            labelStrategyDetail.Text = "请选择或添加一个策略来查看或编辑详情";
-        }
+            // 确保策略详情相关控件可见并初始化
+            if (labelStrategyDetail != null)
+            {
+                labelStrategyDetail.Visible = true;
+                labelStrategyDetail.Text = "请选择或添加一个策略来查看或编辑详情";
+            }
         
-        // 确保策略负载格式选择相关控件初始化
-        if (rdoStringMode != null)
-        {
-            rdoStringMode.Checked = true;
-            AddLog("初始化: 策略格式选择设为文本格式");
-        }
+            // 确保策略负载格式选择相关控件初始化
+            if (rdoStringMode != null)
+            {
+                rdoStringMode.Checked = true;
+                AddLog("初始化: 策略格式选择设为文本格式");
+            }
         
-        if (rdoHexMode != null)
-        {
-            rdoHexMode.Checked = false;
-            AddLog("初始化: 策略格式选择设为HEX格式(未选中)");
-        }
+            if (rdoHexMode != null)
+            {
+                rdoHexMode.Checked = false;
+                AddLog("初始化: 策略格式选择设为HEX格式(未选中)");
+            }
         
-        // 确保txtFullStrategyPayload控件初始化
-        if (txtFullStrategyPayload != null)
-        {
-            txtFullStrategyPayload.Text = "请选择一个策略以查看详细报文内容";
-            txtFullStrategyPayload.Refresh();
-            AddLog("初始化: 策略报文显示区域设为提示文本");
-        }
+            // 确保txtFullStrategyPayload控件初始化
+            if (txtFullStrategyPayload != null)
+            {
+                txtFullStrategyPayload.Text = "请选择一个策略以查看详细报文内容";
+                txtFullStrategyPayload.Refresh();
+                AddLog("初始化: 策略报文显示区域设为提示文本");
+            }
 
-        // 初始化策略列表
-        strategyList = new List<StrategyData>();
-        UpdateStrategyList();
-    }
+            // 初始化策略列表
+            strategyList = new List<StrategyData>();
+            UpdateStrategyList();
+        }
 
         private void UpdateConnectionButtonState()
         {
@@ -225,6 +227,7 @@ namespace MqttClientDemo
                         System.ArraySegment<byte> payloadSegment = args.ApplicationMessage.PayloadSegment;
                         //byte[] payloadBytes = payloadSegment.ToArray();
                         byte[] payloadBytes = new byte[payloadSegment.Count];
+                        payloadSegment.CopyTo(payloadBytes); // 复制实际数据到数组
                         int payloadLength = payloadBytes.Length;
 
                         // 根据当前设置的打印方式格式化payload
